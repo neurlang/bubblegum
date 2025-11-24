@@ -3,6 +3,7 @@ package lib
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -131,31 +132,52 @@ func NewProgram(model Model, opts ...ProgramOption) *Program {
 // Run starts the program and blocks until it exits.
 // It returns the final model state and any error that occurred.
 func (p *Program) Run() (Model, error) {
+	Info("Starting BubbleGum application")
+	Debug("Configuration: %+v", p.options)
+	
+	// Validate configuration options
+	if err := p.validateOptions(); err != nil {
+		return p.model, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	Debug("Creating Wayland display")
 	// Create Wayland display
 	display, err := window.DisplayCreate([]string{})
 	if err != nil {
-		return p.model, fmt.Errorf("failed to create display: %w", err)
+		return p.model, fmt.Errorf("failed to create Wayland display: %w (ensure Wayland compositor is running)", err)
 	}
 	p.display = display
 	defer p.display.Destroy()
 
+	Debug("Creating window")
 	// Create window
 	p.window = window.Create(display)
+	if p.window == nil {
+		return p.model, fmt.Errorf("failed to create window: window.Create returned nil")
+	}
 	defer p.window.Destroy()
 
 	// Set window title
+	Debug("Setting window title: %s", p.options.WindowTitle)
 	p.window.SetTitle(p.options.WindowTitle)
 
 	// Set buffer type
+	Debug("Setting buffer type to SHM")
 	p.window.SetBufferType(window.BufferTypeShm)
 
+	Debug("Creating widget")
 	// Create widget
 	p.widget = p.window.AddWidget(p)
+	if p.widget == nil {
+		return p.model, fmt.Errorf("failed to create widget: AddWidget returned nil")
+	}
 	defer p.widget.Destroy()
 
 	// Set up keyboard handler
+	Debug("Setting up keyboard handler")
 	p.window.SetKeyboardHandler(p)
 
+	Debug("Creating renderer")
 	// Create renderer
 	p.renderer, err = NewRenderer(RendererOptions{
 		DefaultFg: NewColor(255, 255, 255),
@@ -165,6 +187,7 @@ func (p *Program) Run() (Model, error) {
 		return p.model, fmt.Errorf("failed to create renderer: %w", err)
 	}
 
+	Debug("Creating command executor")
 	// Create command executor
 	p.cmdExec = NewCommandExecutor(p.ctx, p.msgChan)
 	defer p.cmdExec.Shutdown()
@@ -173,26 +196,68 @@ func (p *Program) Run() (Model, error) {
 	// We'll get it from event handlers
 
 	// Schedule initial resize
+	Debug("Scheduling initial resize: %dx%d", p.options.InitialWidth, p.options.InitialHeight)
 	p.widget.ScheduleResize(p.options.InitialWidth, p.options.InitialHeight)
 
-	// Call model's Init() and execute initial command
-	initialCmd := p.model.Init()
+	Debug("Calling model Init()")
+	// Call model's Init() with panic recovery
+	var initialCmd Cmd
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Error("Panic in Init(): %v", r)
+				// Log stack trace
+				Error("Stack trace: %v", getStackTrace())
+				// Don't execute any command if Init panicked
+				initialCmd = nil
+			}
+		}()
+		initialCmd = p.model.Init()
+	}()
+	
 	if initialCmd != nil {
+		Debug("Executing initial command")
 		p.cmdExec.Execute(initialCmd)
 	}
 
+	Info("Starting event loop")
 	// Run the display event loop (blocks until quit)
 	window.DisplayRun(display)
 
+	Info("Application exited")
 	return p.model, nil
+}
+
+// validateOptions validates the program configuration options.
+func (p *Program) validateOptions() error {
+	if p.options.InitialWidth <= 0 {
+		return fmt.Errorf("initial width must be positive, got %d", p.options.InitialWidth)
+	}
+	if p.options.InitialHeight <= 0 {
+		return fmt.Errorf("initial height must be positive, got %d", p.options.InitialHeight)
+	}
+	if p.options.FontSize <= 0 {
+		return fmt.Errorf("font size must be positive, got %d", p.options.FontSize)
+	}
+	if p.options.FPS < 0 {
+		return fmt.Errorf("FPS must be non-negative, got %d", p.options.FPS)
+	}
+	if p.options.WindowTitle == "" {
+		return fmt.Errorf("window title cannot be empty")
+	}
+	if p.options.FontFamily == "" {
+		return fmt.Errorf("font family cannot be empty")
+	}
+	return nil
 }
 
 // handleMessage processes a single message by calling Update and rendering.
 func (p *Program) handleMessage(msg Msg) {
-	fmt.Printf("handleMessage received: %+v\n", msg)
+	Debug("handleMessage received: %T", msg)
 	
 	// Check if this is a quit message
 	if _, isQuit := msg.(quitMsg); isQuit {
+		Info("Quit message received, exiting")
 		p.quit()
 		return
 	}
@@ -203,7 +268,7 @@ func (p *Program) handleMessage(msg Msg) {
 	p.model, cmd = p.model.Update(msg)
 	p.mu.Unlock()
 
-	fmt.Printf("After Update, scheduling redraw\n")
+	Debug("Update completed, returned command: %v", cmd != nil)
 
 	// Execute the returned command
 	if cmd != nil {
@@ -258,6 +323,8 @@ func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidt
 	gridWidth := int(pwidth / cellWidth)
 	gridHeight := int(pheight / cellHeight)
 
+	Debug("Window resized: %dx%d pixels -> %dx%d cells", pwidth, pheight, gridWidth, gridHeight)
+
 	// Store dimensions
 	p.windowWidth = gridWidth
 	p.windowHeight = gridHeight
@@ -269,7 +336,7 @@ func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidt
 		Height: gridHeight,
 	}:
 	default:
-		fmt.Println("Message channel full, dropping WindowSizeMsg")
+		Warn("Message channel full, dropping WindowSizeMsg")
 	}
 }
 
@@ -292,14 +359,25 @@ func (p *Program) Redraw(widget *window.Widget) {
 				return
 			}
 
-			// Call Update
-			var cmd Cmd
-			p.model, cmd = p.model.Update(msg)
+			// Call Update with panic recovery
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						Error("Panic in Update(): %v", r)
+						Error("Stack trace: %v", getStackTrace())
+						// Exit gracefully on panic
+						p.quit()
+					}
+				}()
+				
+				var cmd Cmd
+				p.model, cmd = p.model.Update(msg)
 
-			// Execute the returned command
-			if cmd != nil {
-				p.cmdExec.Execute(cmd)
-			}
+				// Execute the returned command
+				if cmd != nil {
+					p.cmdExec.Execute(cmd)
+				}
+			}()
 		default:
 			// No more messages to process
 			goto done
@@ -320,8 +398,21 @@ done:
 		}
 	}
 
-	// Get the current view
-	view := p.model.View()
+	// Get the current view with panic recovery
+	var view string
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				Error("Panic in View(): %v", r)
+				Error("Stack trace: %v", getStackTrace())
+				// Use empty view on panic
+				view = ""
+				// Exit gracefully on panic
+				p.quit()
+			}
+		}()
+		view = p.model.View()
+	}()
 
 	// Skip rendering if view hasn't changed (unless we processed messages)
 	if view == p.lastView && p.lastView != "" && !hadMessages {
@@ -331,21 +422,26 @@ done:
 	// Get the window surface
 	surface := p.window.WindowGetSurface()
 	if surface == nil {
+		Warn("WindowGetSurface returned nil, skipping render")
 		return
 	}
 
 	// Parse the view into a terminal grid
 	grid := ParseANSI(view, p.windowWidth, p.windowHeight)
 	if grid == nil {
+		Error("ParseANSI returned nil grid, skipping render")
 		return
 	}
 
 	// Render the grid
 	err := p.renderer.Render(grid, surface)
 	if err != nil {
-		// Log error but continue
+		// Log error but continue - don't crash the application
+		Error("Render failed: %v", err)
 		return
 	}
+
+	Debug("Rendered frame successfully")
 
 	// Update state
 	p.lastView = view
@@ -380,6 +476,7 @@ func (p *Program) Key(
 	// Map the keyboard event to a KeyMsg
 	keyMsg := MapKeyboardEvent(input, keysym, key, input.GetModifiers(), state)
 	if keyMsg != nil {
+		Debug("Keyboard event: key=%d, keysym=%d, state=%d", key, keysym, state)
 		// Send to channel (non-blocking)
 		select {
 		case p.msgChan <- *keyMsg:
@@ -388,7 +485,7 @@ func (p *Program) Key(
 				p.widget.ScheduleRedraw()
 			}
 		default:
-			// Message channel full, drop message
+			Warn("Message channel full, dropping keyboard event")
 		}
 	}
 }
@@ -421,6 +518,7 @@ func (p *Program) Motion(widget *window.Widget, input *window.Input, time uint32
 
 	mouseMsg := MapMouseMotion(x, y, cellWidth, cellHeight)
 	if mouseMsg != nil {
+		Debug("Mouse motion: (%.1f, %.1f)", x, y)
 		p.Send(*mouseMsg)
 	}
 
@@ -438,6 +536,8 @@ func (p *Program) Button(
 ) {
 	cellWidth := p.renderer.CellWidth()
 	cellHeight := p.renderer.CellHeight()
+
+	Debug("Mouse button: button=%d, state=%d", button, state)
 
 	// Use stored pointer position
 	mouseMsg := MapMouseButton(p.pointerX, p.pointerY, button, state, cellWidth, cellHeight)
@@ -509,4 +609,9 @@ func (p *Program) AxisDiscrete(widget *window.Widget, input *window.Input, axis 
 // PointerFrame implements window.WidgetHandler interface.
 func (p *Program) PointerFrame(widget *window.Widget, input *window.Input) {
 	// Pointer frame events not needed for basic functionality
+}
+
+// getStackTrace returns the current stack trace as a string.
+func getStackTrace() string {
+	return string(debug.Stack())
 }

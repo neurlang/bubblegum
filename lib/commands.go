@@ -2,6 +2,7 @@ package lib
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 )
@@ -84,6 +85,16 @@ func (ce *CommandExecutor) Execute(cmd Cmd) {
 	ce.wg.Add(1)
 	go func() {
 		defer ce.wg.Done()
+		defer func() {
+			// Recover from panics in command execution
+			if r := recover(); r != nil {
+				Error("Command panicked: %v", r)
+				// Deliver error message to Update
+				ce.deliverMessage(ErrorMsg{Err: fmt.Errorf("command panic: %v", r)})
+			}
+		}()
+
+		Debug("Executing command")
 
 		// Execute the command and get the resulting message
 		msg := cmd()
@@ -116,19 +127,23 @@ func (ce *CommandExecutor) ExecuteBatch(cmds []Cmd) {
 // It respects the context cancellation to avoid blocking on a closed channel.
 func (ce *CommandExecutor) deliverMessage(msg Msg) {
 	if msg == nil {
+		Debug("Skipping nil message delivery")
 		return
 	}
 
+	Debug("Delivering message: %T", msg)
+
 	select {
 	case ce.msgChan <- msg:
-		// Message delivered successfully
+		Debug("Message delivered successfully")
 	case <-ce.ctx.Done():
-		// Context cancelled, don't block
+		Debug("Context cancelled, message not delivered")
 	}
 }
 
 // startTimer creates a recurring timer that sends messages at regular intervals.
 func (ce *CommandExecutor) startTimer(d time.Duration, fn func(time.Time) Msg) {
+	Debug("Starting timer with duration: %v", d)
 	ticker := time.NewTicker(d)
 	timerCtx, cancel := context.WithCancel(ce.ctx)
 
@@ -144,16 +159,20 @@ func (ce *CommandExecutor) startTimer(d time.Duration, fn func(time.Time) Msg) {
 			ce.mu.Lock()
 			delete(ce.timers, ticker)
 			ce.mu.Unlock()
+			Debug("Timer stopped")
 		}()
 
 		for {
 			select {
 			case t := <-ticker.C:
+				Debug("Timer tick at %v", t)
 				msg := fn(t)
 				ce.deliverMessage(msg)
 			case <-timerCtx.Done():
+				Debug("Timer context cancelled")
 				return
 			case <-ce.ctx.Done():
+				Debug("Command executor context cancelled")
 				return
 			}
 		}
@@ -163,13 +182,20 @@ func (ce *CommandExecutor) startTimer(d time.Duration, fn func(time.Time) Msg) {
 // Shutdown stops all running commands and waits for them to complete.
 // It cancels all recurring timers and waits for all goroutines to finish.
 func (ce *CommandExecutor) Shutdown() {
+	Debug("Shutting down command executor")
+	
 	// Cancel all timers
 	ce.mu.Lock()
+	timerCount := len(ce.timers)
 	for _, cancel := range ce.timers {
 		cancel()
 	}
 	ce.mu.Unlock()
 
+	Debug("Cancelled %d timers", timerCount)
+
 	// Wait for all goroutines to finish
 	ce.wg.Wait()
+	
+	Debug("Command executor shutdown complete")
 }

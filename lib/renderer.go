@@ -24,7 +24,7 @@ type RendererOptions struct {
 func NewRenderer(opts RendererOptions) (*Renderer, error) {
 	font, err := NewFont()
 	if err != nil {
-		return nil, fmt.Errorf("failed to load font: %w", err)
+		return nil, fmt.Errorf("failed to load base font (ascii.png): %w (ensure font files are embedded)", err)
 	}
 
 	// Try to load extended fonts (optional, failures are ignored)
@@ -50,7 +50,9 @@ func (r *Renderer) CellHeight() int32 {
 // Render renders the entire terminal grid to the Cairo surface.
 func (r *Renderer) Render(grid *TerminalGrid, surface cairo.Surface) error {
 	if grid == nil {
-		return fmt.Errorf("grid is nil")
+		err := fmt.Errorf("grid is nil")
+		Error("Render failed: %v", err)
+		return err
 	}
 
 	// Get surface dimensions
@@ -58,10 +60,14 @@ func (r *Renderer) Render(grid *TerminalGrid, surface cairo.Surface) error {
 	height := surface.ImageSurfaceGetHeight()
 	
 	if width <= 0 || height <= 0 {
-		return fmt.Errorf("invalid surface dimensions: %dx%d", width, height)
+		err := fmt.Errorf("invalid surface dimensions: %dx%d", width, height)
+		Error("Render failed: %v", err)
+		return err
 	}
 
-	// Render all cells
+	Debug("Rendering grid: %dx%d cells to surface: %dx%d pixels", grid.Width, grid.Height, width, height)
+
+	// Render all cells - continue even if individual cells fail
 	for y := 0; y < grid.Height; y++ {
 		for x := 0; x < grid.Width; x++ {
 			cell := grid.Cells[y][x]
@@ -116,6 +122,18 @@ func (r *Renderer) renderCell(surface cairo.Surface, gridX, gridY int, cell Cell
 	// Get the character texture
 	charStr := string(cell.Rune)
 	texture := r.font.GetRGBTexture(charStr)
+
+	// Handle missing glyph - texture will be nil or a placeholder
+	if texture == nil {
+		Debug("Missing glyph for character: %q (U+%04X), using space", charStr, cell.Rune)
+		// Use space character as fallback
+		texture = r.font.GetRGBTexture(" ")
+		if texture == nil {
+			// If even space is missing, skip rendering this cell
+			Warn("Font missing space character, skipping cell at (%d, %d)", gridX, gridY)
+			return
+		}
+	}
 
 	// Render using the PutRGB method similar to the texteditor
 	r.putRGB(surface, pixelX, pixelY, texture, cellWidth, cellHeight, 
