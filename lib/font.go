@@ -236,15 +236,26 @@ func (f *Font) LoadExtendedFonts() error {
 }
 
 // asciiDescriptor defines the layout of the ASCII font image
-const asciiDescriptor = ` 	!	"	#	$	%	&	'	(	)	*	+	,	-	.	/
-0	1	2	3	4	5	6	7	8	9	:	;	<	=	>	?
-@	A	B	C	D	E	F	G	H	I	J	K	L	M	N	O
-P	Q	R	S	T	U	V	W	X	Y	Z	[	\	]	^	_
-` + "`" + `	a	b	c	d	e	f	g	h	i	j	k	l	m	n	o
-p	q	r	s	t	u	v	w	x	y	z	{	|	}	~	`
+var asciiDescriptor = "" +
+	` 	0	@	P	` + "`" + `	p
+	!	1	A	Q	a	q
+	"	2	B	R	b	r
+	#	3	C	S	c	s
+	$	4	D	T	d	t
+	%	5	E	U	e	u
+	&	6	F	V	f	v
+	'	7	G	W	g	w
+	(	8	H	X	h	x
+	)	9	I	Y	i	y
+	*	:	J	Z	j	z
+	+	;	K	[	k	{
+	,	<	L	\	l	|
+	-	=	M	]	m	}
+	.	>	N	^	n	~
+	/	?	O	_	o	DEL`
 
 // extendedaDescriptor defines extended Latin characters
-const extendedaDescriptor = "" +
+var extendedaDescriptor = "" +
 	`Ā	Ġ	Ŀ	ş	ā	ġ	ŀ	Š
 	Ă	Ģ	Ł	š	ă	ģ	ł	Ţ
 	Ą	Ĥ	Ń	ţ	ą	ĥ	ń	Ť
@@ -263,7 +274,7 @@ const extendedaDescriptor = "" +
 	Ğ	Ľ	ŝ	Ž	ğ	ľ	Ş	ž`
 
 // supplementDescriptor defines supplemental Latin characters
-const supplementDescriptor = "" +
+var supplementDescriptor = "" +
 	`¡	±	À	Ï	à	ï
 	¢	²	Á	Ñ	á	ñ
 	£	³	Â	Ò	â	ò
