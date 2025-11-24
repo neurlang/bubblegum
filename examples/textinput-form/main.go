@@ -5,8 +5,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bubblegum/components/textinput"
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/components/textinput"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 type model struct {

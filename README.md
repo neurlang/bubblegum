@@ -37,7 +37,7 @@ BubbleGum is a port of the [Bubble Tea](https://github.com/charmbracelet/bubblet
 ### Install BubbleGum
 
 ```bash
-go get github.com/bubblegum/lib
+go get github.com/neurlang/bubblegum/lib
 ```
 
 ## Quick Start
@@ -51,7 +51,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 type model struct {
@@ -234,7 +234,7 @@ Available components:
 
 While BubbleGum maintains API compatibility with Bubble Tea, there are some differences:
 
-1. **Import Path** - Use `github.com/bubblegum/lib` instead of `github.com/charmbracelet/bubbletea`
+1. **Import Path** - Use `github.com/neurlang/bubblegum/lib` instead of `github.com/charmbracelet/bubbletea`
 2. **Window Configuration** - Additional options for window title, size, and font
 3. **Mouse Support** - Mouse events are always enabled (no need to enable mouse mode)
 4. **Performance** - Rendering is optimized for GUI windows with frame rate limiting

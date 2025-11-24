@@ -24,10 +24,10 @@ Components are included with BubbleGum. Import them as needed:
 
 ```go
 import (
-    "github.com/bubblegum/components/textinput"
-    "github.com/bubblegum/components/spinner"
-    "github.com/bubblegum/components/list"
-    "github.com/bubblegum/components/viewport"
+    "github.com/neurlang/bubblegum/components/textinput"
+    "github.com/neurlang/bubblegum/components/spinner"
+    "github.com/neurlang/bubblegum/components/list"
+    "github.com/neurlang/bubblegum/components/viewport"
 )
 ```
 
@@ -49,7 +49,7 @@ A single-line text input field with cursor, selection, and scrolling support.
 ### Basic Usage
 
 ```go
-import "github.com/bubblegum/components/textinput"
+import "github.com/neurlang/bubblegum/components/textinput"
 
 type model struct {
     input textinput.Model
@@ -147,7 +147,7 @@ An animated loading spinner with multiple predefined styles.
 
 ```go
 import (
-    "github.com/bubblegum/components/spinner"
+    "github.com/neurlang/bubblegum/components/spinner"
     "time"
 )
 
@@ -255,7 +255,7 @@ A scrollable list component with selection, filtering, and keyboard navigation.
 ### Basic Usage
 
 ```go
-import "github.com/bubblegum/components/list"
+import "github.com/neurlang/bubblegum/components/list"
 
 type model struct {
     list list.Model
@@ -413,7 +413,7 @@ A scrollable content area for displaying large amounts of text.
 ### Basic Usage
 
 ```go
-import "github.com/bubblegum/components/viewport"
+import "github.com/neurlang/bubblegum/components/viewport"
 
 type model struct {
     viewport viewport.Model
@@ -536,7 +536,7 @@ import "github.com/charmbracelet/bubbles/textinput"
 
 **BubbleGum:**
 ```go
-import "github.com/bubblegum/components/textinput"
+import "github.com/neurlang/bubblegum/components/textinput"
 ```
 
 ### Message Types

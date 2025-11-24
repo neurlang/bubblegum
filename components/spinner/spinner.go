@@ -5,7 +5,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 // Internal ID management for routing messages.

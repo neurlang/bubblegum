@@ -5,7 +5,7 @@ import (
 	"math"
 	"strings"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 // Model is the viewport model for BubbleGum.

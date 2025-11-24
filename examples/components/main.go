@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/bubblegum/components/list"
-	"github.com/bubblegum/components/spinner"
-	"github.com/bubblegum/components/textinput"
-	"github.com/bubblegum/components/viewport"
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/components/list"
+	"github.com/neurlang/bubblegum/components/spinner"
+	"github.com/neurlang/bubblegum/components/textinput"
+	"github.com/neurlang/bubblegum/components/viewport"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 // Model demonstrates using multiple BubbleGum components.

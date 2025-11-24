@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 type model struct {

@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 type tickMsg time.Time

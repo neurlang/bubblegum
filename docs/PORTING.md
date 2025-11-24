@@ -26,7 +26,7 @@ BubbleGum is designed to be highly compatible with Bubble Tea. In most cases, po
 
 ## Quick Migration Checklist
 
-- [ ] Change import from `github.com/charmbracelet/bubbletea` to `github.com/bubblegum/lib`
+- [ ] Change import from `github.com/charmbracelet/bubbletea` to `github.com/neurlang/bubblegum/lib`
 - [ ] Update component imports (if using Bubbles components)
 - [ ] Add window configuration options (title, size, etc.)
 - [ ] Remove terminal-specific options (alt screen, mouse mode)
@@ -48,7 +48,7 @@ import (
 **After (BubbleGum):**
 ```go
 import (
-    "github.com/bubblegum/lib"
+    "github.com/neurlang/bubblegum/lib"
 )
 ```
 
@@ -65,8 +65,8 @@ import (
 **After:**
 ```go
 import (
-    "github.com/bubblegum/components/textinput"
-    "github.com/bubblegum/components/spinner"
+    "github.com/neurlang/bubblegum/components/textinput"
+    "github.com/neurlang/bubblegum/components/spinner"
 )
 ```
 
@@ -281,7 +281,7 @@ package main
 import (
     "fmt"
     "os"
-    "github.com/bubblegum/lib"  // Changed import
+    "github.com/neurlang/bubblegum/lib"  // Changed import
 )
 
 type model struct {
@@ -448,7 +448,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 **BubbleGum:**
 ```go
-import "github.com/bubblegum/components/textinput"
+import "github.com/neurlang/bubblegum/components/textinput"
 
 type model struct {
     input textinput.Model

@@ -497,7 +497,7 @@ undefined: lib.NewProgram
 
 1. Check import path:
    ```go
-   import "github.com/bubblegum/lib"
+   import "github.com/neurlang/bubblegum/lib"
    ```
 
 2. Run `go mod tidy`:
@@ -516,7 +516,7 @@ module requires different version
 **Solution:**
 
 ```bash
-go get github.com/bubblegum/lib@latest
+go get github.com/neurlang/bubblegum/lib@latest
 go mod tidy
 ```
 
@@ -633,7 +633,7 @@ Create a minimal example that reproduces the issue:
 ```go
 package main
 
-import "github.com/bubblegum/lib"
+import "github.com/neurlang/bubblegum/lib"
 
 type model struct{}
 
@@ -708,7 +708,7 @@ If you're still stuck:
 | `Panic in Update()` | Code bug | Check stack trace, add bounds checking |
 | `Message channel full` | Too many messages | Increase buffer or reduce message rate |
 | `C compiler not found` | CGO disabled or no compiler | Install gcc, enable CGO |
-| `undefined: lib.NewProgram` | Wrong import | Use `github.com/bubblegum/lib` |
+| `undefined: lib.NewProgram` | Wrong import | Use `github.com/neurlang/bubblegum/lib` |
 
 ---
 

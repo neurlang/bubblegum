@@ -522,7 +522,7 @@ import tea "github.com/charmbracelet/bubbletea"
 
 **BubbleGum:**
 ```go
-import "github.com/bubblegum/lib"
+import "github.com/neurlang/bubblegum/lib"
 ```
 
 ### Program Creation
@@ -651,7 +651,7 @@ Your UI should work at various window sizes. Test with small and large windows.
 Leverage the ported Bubbles components instead of building from scratch:
 
 ```go
-import "github.com/bubblegum/components/textinput"
+import "github.com/neurlang/bubblegum/components/textinput"
 
 type model struct {
     input textinput.Model

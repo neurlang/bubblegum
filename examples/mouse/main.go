@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 type clickEvent struct {

@@ -1,4 +1,4 @@
-module github.com/bubblegum
+module github.com/neurlang/bubblegum
 
 go 1.21
 

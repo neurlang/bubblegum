@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/bubblegum/lib"
+	"github.com/neurlang/bubblegum/lib"
 )
 
 // Model is the text input model for BubbleGum.
