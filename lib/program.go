@@ -181,31 +181,16 @@ func (p *Program) Run() (Model, error) {
 		p.cmdExec.Execute(initialCmd)
 	}
 
-	// Start message processing goroutine
-	go p.processMessages()
-
 	// Run the display event loop (blocks until quit)
 	window.DisplayRun(display)
 
 	return p.model, nil
 }
 
-// processMessages handles messages from the message channel.
-func (p *Program) processMessages() {
-	for {
-		select {
-		case msg := <-p.msgChan:
-			p.handleMessage(msg)
-		case <-p.ctx.Done():
-			return
-		case <-p.quitChan:
-			return
-		}
-	}
-}
-
 // handleMessage processes a single message by calling Update and rendering.
 func (p *Program) handleMessage(msg Msg) {
+	fmt.Printf("handleMessage received: %+v\n", msg)
+	
 	// Check if this is a quit message
 	if _, isQuit := msg.(quitMsg); isQuit {
 		p.quit()
@@ -218,14 +203,17 @@ func (p *Program) handleMessage(msg Msg) {
 	p.model, cmd = p.model.Update(msg)
 	p.mu.Unlock()
 
+	fmt.Printf("After Update, scheduling redraw\n")
+
 	// Execute the returned command
 	if cmd != nil {
 		p.cmdExec.Execute(cmd)
 	}
 
 	// Trigger a redraw
-	if p.widget != nil {
-		p.widget.ScheduleRedraw()
+	if p.window != nil {
+		p.window.UninhibitRedraw()
+		p.window.ScheduleRedraw()
 	}
 }
 
@@ -274,11 +262,15 @@ func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidt
 	p.windowWidth = gridWidth
 	p.windowHeight = gridHeight
 
-	// Send WindowSizeMsg
-	p.Send(WindowSizeMsg{
+	// Send WindowSizeMsg (non-blocking)
+	select {
+	case p.msgChan <- WindowSizeMsg{
 		Width:  gridWidth,
 		Height: gridHeight,
-	})
+	}:
+	default:
+		fmt.Println("Message channel full, dropping WindowSizeMsg")
+	}
 }
 
 // Redraw implements window.WidgetHandler interface.
@@ -287,12 +279,43 @@ func (p *Program) Redraw(widget *window.Widget) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Process ALL pending messages (non-blocking loop)
+	hadMessages := false
+	for {
+		select {
+		case msg := <-p.msgChan:
+			hadMessages = true
+
+			// Check if this is a quit message
+			if _, isQuit := msg.(quitMsg); isQuit {
+				p.quit()
+				return
+			}
+
+			// Call Update
+			var cmd Cmd
+			p.model, cmd = p.model.Update(msg)
+
+			// Execute the returned command
+			if cmd != nil {
+				p.cmdExec.Execute(cmd)
+			}
+		default:
+			// No more messages to process
+			goto done
+		}
+	}
+done:
+
 	// Check frame rate limiting
 	if p.options.FPS > 0 {
 		minFrameTime := time.Second / time.Duration(p.options.FPS)
 		elapsed := time.Since(p.lastRender)
 		if elapsed < minFrameTime {
-			// Skip this frame
+			// Skip this frame but schedule another redraw if we had messages
+			if hadMessages && p.window != nil {
+				p.window.UninhibitRedraw()
+			}
 			return
 		}
 	}
@@ -300,8 +323,8 @@ func (p *Program) Redraw(widget *window.Widget) {
 	// Get the current view
 	view := p.model.View()
 
-	// Skip rendering if view hasn't changed
-	if view == p.lastView && p.lastView != "" {
+	// Skip rendering if view hasn't changed (unless we processed messages)
+	if view == p.lastView && p.lastView != "" && !hadMessages {
 		return
 	}
 
@@ -321,7 +344,6 @@ func (p *Program) Redraw(widget *window.Widget) {
 	err := p.renderer.Render(grid, surface)
 	if err != nil {
 		// Log error but continue
-		fmt.Printf("render error: %v\n", err)
 		return
 	}
 
@@ -329,6 +351,8 @@ func (p *Program) Redraw(widget *window.Widget) {
 	p.lastView = view
 	p.lastRender = time.Now()
 }
+
+
 
 // Key implements window.KeyboardHandler interface.
 // It handles keyboard input events.
@@ -341,15 +365,31 @@ func (p *Program) Key(
 	state wl.KeyboardKeyState,
 	data window.WidgetHandler,
 ) {
+	// Uninhibit redraw to allow the window to update
+	win.UninhibitRedraw()
+
 	// Store input reference
 	if p.input == nil {
 		p.input = input
 	}
 
+	// The notUnicode parameter contains the keysym
+	// GetRune will modify it, so we need to save it first
+	keysym := notUnicode
+
 	// Map the keyboard event to a KeyMsg
-	keyMsg := MapKeyboardEvent(input, notUnicode, key, input.GetModifiers(), state)
+	keyMsg := MapKeyboardEvent(input, keysym, key, input.GetModifiers(), state)
 	if keyMsg != nil {
-		p.Send(*keyMsg)
+		// Send to channel (non-blocking)
+		select {
+		case p.msgChan <- *keyMsg:
+			// Schedule a redraw to process the message
+			if p.widget != nil {
+				p.widget.ScheduleRedraw()
+			}
+		default:
+			// Message channel full, drop message
+		}
 	}
 }
 
