@@ -2,9 +2,12 @@ package lib
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/neurlang/wayland/window"
+	"github.com/neurlang/wayland/wl"
 )
 
 // Program manages the application lifecycle, window, and event loop.
@@ -21,8 +24,18 @@ type Program struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	options ProgramOptions
-	mu      sync.Mutex
+	options  ProgramOptions
+	mu       sync.Mutex
+	renderer *Renderer
+	cmdExec  *CommandExecutor
+
+	lastView     string
+	lastRender   time.Time
+	windowWidth  int
+	windowHeight int
+	input        *window.Input
+	pointerX     float32
+	pointerY     float32
 }
 
 // ProgramOptions configures the Program's appearance and behavior.
@@ -118,15 +131,110 @@ func NewProgram(model Model, opts ...ProgramOption) *Program {
 // Run starts the program and blocks until it exits.
 // It returns the final model state and any error that occurred.
 func (p *Program) Run() (Model, error) {
-	// TODO: Implementation will be added in later tasks
-	// This includes:
-	// - Creating the Wayland display and window
-	// - Setting up the event loop
-	// - Calling Init() and executing the initial command
-	// - Processing messages and calling Update()
-	// - Calling View() and rendering output
-	// - Handling window events
+	// Create Wayland display
+	display, err := window.DisplayCreate([]string{})
+	if err != nil {
+		return p.model, fmt.Errorf("failed to create display: %w", err)
+	}
+	p.display = display
+	defer p.display.Destroy()
+
+	// Create window
+	p.window = window.Create(display)
+	defer p.window.Destroy()
+
+	// Set window title
+	p.window.SetTitle(p.options.WindowTitle)
+
+	// Set buffer type
+	p.window.SetBufferType(window.BufferTypeShm)
+
+	// Create widget
+	p.widget = p.window.AddWidget(p)
+	defer p.widget.Destroy()
+
+	// Set up keyboard handler
+	p.window.SetKeyboardHandler(p)
+
+	// Create renderer
+	p.renderer, err = NewRenderer(RendererOptions{
+		DefaultFg: NewColor(255, 255, 255),
+		DefaultBg: NewColor(0, 0, 0),
+	})
+	if err != nil {
+		return p.model, fmt.Errorf("failed to create renderer: %w", err)
+	}
+
+	// Create command executor
+	p.cmdExec = NewCommandExecutor(p.ctx, p.msgChan)
+	defer p.cmdExec.Shutdown()
+
+	// Create input handler (note: Input is created by the window system, not by us)
+	// We'll get it from event handlers
+
+	// Schedule initial resize
+	p.widget.ScheduleResize(p.options.InitialWidth, p.options.InitialHeight)
+
+	// Call model's Init() and execute initial command
+	initialCmd := p.model.Init()
+	if initialCmd != nil {
+		p.cmdExec.Execute(initialCmd)
+	}
+
+	// Start message processing goroutine
+	go p.processMessages()
+
+	// Run the display event loop (blocks until quit)
+	window.DisplayRun(display)
+
 	return p.model, nil
+}
+
+// processMessages handles messages from the message channel.
+func (p *Program) processMessages() {
+	for {
+		select {
+		case msg := <-p.msgChan:
+			p.handleMessage(msg)
+		case <-p.ctx.Done():
+			return
+		case <-p.quitChan:
+			return
+		}
+	}
+}
+
+// handleMessage processes a single message by calling Update and rendering.
+func (p *Program) handleMessage(msg Msg) {
+	// Check if this is a quit message
+	if _, isQuit := msg.(quitMsg); isQuit {
+		p.quit()
+		return
+	}
+
+	// Call Update
+	p.mu.Lock()
+	var cmd Cmd
+	p.model, cmd = p.model.Update(msg)
+	p.mu.Unlock()
+
+	// Execute the returned command
+	if cmd != nil {
+		p.cmdExec.Execute(cmd)
+	}
+
+	// Trigger a redraw
+	if p.widget != nil {
+		p.widget.ScheduleRedraw()
+	}
+}
+
+// quit handles the quit process.
+func (p *Program) quit() {
+	p.cancel()
+	if p.display != nil {
+		p.display.Exit()
+	}
 }
 
 // Send sends a message to the program's Update function.
@@ -142,4 +250,223 @@ func (p *Program) Send(msg Msg) {
 func (p *Program) Quit() {
 	p.cancel()
 	close(p.quitChan)
+}
+
+// Resize implements window.WidgetHandler interface.
+// It handles window resize events and sends WindowSizeMsg.
+func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidth int32, pheight int32) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Update widget allocation
+	if width != pwidth || height != pheight {
+		widget.SetAllocation(0, 0, pwidth, pheight)
+	}
+
+	// Calculate grid dimensions based on cell size
+	cellWidth := p.renderer.CellWidth()
+	cellHeight := p.renderer.CellHeight()
+
+	gridWidth := int(pwidth / cellWidth)
+	gridHeight := int(pheight / cellHeight)
+
+	// Store dimensions
+	p.windowWidth = gridWidth
+	p.windowHeight = gridHeight
+
+	// Send WindowSizeMsg
+	p.Send(WindowSizeMsg{
+		Width:  gridWidth,
+		Height: gridHeight,
+	})
+}
+
+// Redraw implements window.WidgetHandler interface.
+// It renders the current view to the window.
+func (p *Program) Redraw(widget *window.Widget) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Check frame rate limiting
+	if p.options.FPS > 0 {
+		minFrameTime := time.Second / time.Duration(p.options.FPS)
+		elapsed := time.Since(p.lastRender)
+		if elapsed < minFrameTime {
+			// Skip this frame
+			return
+		}
+	}
+
+	// Get the current view
+	view := p.model.View()
+
+	// Skip rendering if view hasn't changed
+	if view == p.lastView && p.lastView != "" {
+		return
+	}
+
+	// Get the window surface
+	surface := p.window.WindowGetSurface()
+	if surface == nil {
+		return
+	}
+
+	// Parse the view into a terminal grid
+	grid := ParseANSI(view, p.windowWidth, p.windowHeight)
+	if grid == nil {
+		return
+	}
+
+	// Render the grid
+	err := p.renderer.Render(grid, surface)
+	if err != nil {
+		// Log error but continue
+		fmt.Printf("render error: %v\n", err)
+		return
+	}
+
+	// Update state
+	p.lastView = view
+	p.lastRender = time.Now()
+}
+
+// Key implements window.KeyboardHandler interface.
+// It handles keyboard input events.
+func (p *Program) Key(
+	win *window.Window,
+	input *window.Input,
+	time uint32,
+	key uint32,
+	notUnicode uint32,
+	state wl.KeyboardKeyState,
+	data window.WidgetHandler,
+) {
+	// Store input reference
+	if p.input == nil {
+		p.input = input
+	}
+
+	// Map the keyboard event to a KeyMsg
+	keyMsg := MapKeyboardEvent(input, notUnicode, key, input.GetModifiers(), state)
+	if keyMsg != nil {
+		p.Send(*keyMsg)
+	}
+}
+
+// Focus implements window.KeyboardHandler interface.
+func (p *Program) Focus(win *window.Window, device *window.Input) {
+	// Send focus event (could be extended to send a FocusMsg)
+}
+
+// Enter implements window.WidgetHandler interface for pointer enter events.
+func (p *Program) Enter(widget *window.Widget, input *window.Input, x float32, y float32) {
+	// Store pointer position
+	p.pointerX = x
+	p.pointerY = y
+}
+
+// Leave implements window.WidgetHandler interface for pointer leave events.
+func (p *Program) Leave(widget *window.Widget, input *window.Input) {
+	// Mouse left the window
+}
+
+// Motion implements window.WidgetHandler interface for pointer motion events.
+func (p *Program) Motion(widget *window.Widget, input *window.Input, time uint32, x float32, y float32) int {
+	// Store pointer position
+	p.pointerX = x
+	p.pointerY = y
+
+	cellWidth := p.renderer.CellWidth()
+	cellHeight := p.renderer.CellHeight()
+
+	mouseMsg := MapMouseMotion(x, y, cellWidth, cellHeight)
+	if mouseMsg != nil {
+		p.Send(*mouseMsg)
+	}
+
+	return window.CursorLeft
+}
+
+// Button implements window.WidgetHandler interface for pointer button events.
+func (p *Program) Button(
+	widget *window.Widget,
+	input *window.Input,
+	time uint32,
+	button uint32,
+	state wl.PointerButtonState,
+	data window.WidgetHandler,
+) {
+	cellWidth := p.renderer.CellWidth()
+	cellHeight := p.renderer.CellHeight()
+
+	// Use stored pointer position
+	mouseMsg := MapMouseButton(p.pointerX, p.pointerY, button, state, cellWidth, cellHeight)
+	if mouseMsg != nil {
+		p.Send(*mouseMsg)
+	}
+}
+
+// Axis implements window.WidgetHandler interface for pointer axis (scroll) events.
+func (p *Program) Axis(widget *window.Widget, input *window.Input, time uint32, axis uint32, value float32) {
+	cellWidth := p.renderer.CellWidth()
+	cellHeight := p.renderer.CellHeight()
+
+	// Use stored pointer position
+	mouseMsg := MapMouseScroll(p.pointerX, p.pointerY, axis, value, cellWidth, cellHeight)
+	if mouseMsg != nil {
+		p.Send(*mouseMsg)
+	}
+}
+
+// TouchUp implements window.WidgetHandler interface.
+func (p *Program) TouchUp(widget *window.Widget, input *window.Input, serial uint32, time uint32, id int32) {
+	// Touch events not implemented yet
+}
+
+// TouchDown implements window.WidgetHandler interface.
+func (p *Program) TouchDown(
+	widget *window.Widget,
+	input *window.Input,
+	serial uint32,
+	time uint32,
+	id int32,
+	x float32,
+	y float32,
+) {
+	// Touch events not implemented yet
+}
+
+// TouchMotion implements window.WidgetHandler interface.
+func (p *Program) TouchMotion(widget *window.Widget, input *window.Input, time uint32, id int32, x float32, y float32) {
+	// Touch events not implemented yet
+}
+
+// TouchFrame implements window.WidgetHandler interface.
+func (p *Program) TouchFrame(widget *window.Widget, input *window.Input) {
+	// Touch events not implemented yet
+}
+
+// TouchCancel implements window.WidgetHandler interface.
+func (p *Program) TouchCancel(widget *window.Widget, width int32, height int32) {
+	// Touch events not implemented yet
+}
+
+// AxisSource implements window.WidgetHandler interface.
+func (p *Program) AxisSource(widget *window.Widget, input *window.Input, source uint32) {
+	// Axis source events not needed for basic functionality
+}
+
+// AxisStop implements window.WidgetHandler interface.
+func (p *Program) AxisStop(widget *window.Widget, input *window.Input, time uint32, axis uint32) {
+	// Axis stop events not needed for basic functionality
+}
+
+// AxisDiscrete implements window.WidgetHandler interface.
+func (p *Program) AxisDiscrete(widget *window.Widget, input *window.Input, axis uint32, discrete int32) {
+	// Axis discrete events not needed for basic functionality
+}
+
+// PointerFrame implements window.WidgetHandler interface.
+func (p *Program) PointerFrame(widget *window.Widget, input *window.Input) {
+	// Pointer frame events not needed for basic functionality
 }
