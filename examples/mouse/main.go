@@ -42,12 +42,13 @@ func (m model) Update(msg lib.Msg) (lib.Model, lib.Cmd) {
 		case lib.KeyEnter:
 			// Clear click history
 			m.clicks = make([]clickEvent, 0)
+			m.lastButton = lib.MouseButtonNone
 		}
 
 	case lib.MouseMsg:
 		switch msg.Type {
 		case lib.MouseMotion:
-			// Update mouse position
+			// Update mouse position (throttled by non-blocking send)
 			m.mouseX = msg.X
 			m.mouseY = msg.Y
 

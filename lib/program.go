@@ -30,13 +30,20 @@ type Program struct {
 	renderer *Renderer
 	cmdExec  *CommandExecutor
 
-	lastView     string
-	lastRender   time.Time
-	windowWidth  int
-	windowHeight int
-	input        *window.Input
-	pointerX     float32
-	pointerY     float32
+	lastView          string
+	lastRender        time.Time
+	windowWidth       int
+	windowHeight      int
+	input             *window.Input
+	pointerX          float32
+	pointerY          float32
+	lastCellX         int
+	lastCellY         int
+	cellPosValid      bool
+	redrawScheduled   bool
+	motionPending     bool
+	pendingMotionX    int
+	pendingMotionY    int
 }
 
 // ProgramOptions configures the Program's appearance and behavior.
@@ -345,45 +352,87 @@ func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidt
 func (p *Program) Redraw(widget *window.Widget) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	
+	// Clear the redraw scheduled flag
+	p.redrawScheduled = false
+	
+	// Check for pending motion and create a message for it
+	// This avoids flooding the message channel with motion events
+	var processedMotion bool
+	if p.motionPending {
+		mouseMsg := &MouseMsg{
+			X:      p.pendingMotionX,
+			Y:      p.pendingMotionY,
+			Type:   MouseMotion,
+			Button: MouseButtonNone,
+		}
+		p.motionPending = false
+		processedMotion = true
+		
+		// Process the motion message directly
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Error("Panic in Update(): %v", r)
+					Error("Stack trace: %v", getStackTrace())
+					p.quit()
+				}
+			}()
+			
+			var cmd Cmd
+			p.model, cmd = p.model.Update(*mouseMsg)
+			if cmd != nil {
+				p.cmdExec.Execute(cmd)
+			}
+		}()
+	}
 
-	// Process ALL pending messages (non-blocking loop)
+	// Process pending messages (non-blocking loop)
 	hadMessages := false
+	var messagesToProcess []Msg
+	
+	// Collect all pending messages (no more motion coalescing needed)
 	for {
 		select {
 		case msg := <-p.msgChan:
 			hadMessages = true
-
+			
 			// Check if this is a quit message
 			if _, isQuit := msg.(quitMsg); isQuit {
 				p.quit()
 				return
 			}
-
-			// Call Update with panic recovery
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						Error("Panic in Update(): %v", r)
-						Error("Stack trace: %v", getStackTrace())
-						// Exit gracefully on panic
-						p.quit()
-					}
-				}()
-				
-				var cmd Cmd
-				p.model, cmd = p.model.Update(msg)
-
-				// Execute the returned command
-				if cmd != nil {
-					p.cmdExec.Execute(cmd)
-				}
-			}()
+			
+			messagesToProcess = append(messagesToProcess, msg)
 		default:
 			// No more messages to process
 			goto done
 		}
 	}
 done:
+	
+	// Process all collected messages
+	for _, msg := range messagesToProcess {
+		// Call Update with panic recovery
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					Error("Panic in Update(): %v", r)
+					Error("Stack trace: %v", getStackTrace())
+					// Exit gracefully on panic
+					p.quit()
+				}
+			}()
+			
+			var cmd Cmd
+			p.model, cmd = p.model.Update(msg)
+
+			// Execute the returned command
+			if cmd != nil {
+				p.cmdExec.Execute(cmd)
+			}
+		}()
+	}
 
 	// Check frame rate limiting
 	if p.options.FPS > 0 {
@@ -446,6 +495,18 @@ done:
 	// Update state
 	p.lastView = view
 	p.lastRender = time.Now()
+
+	// Uninhibit redraw to allow future redraws
+	if p.window != nil {
+		p.window.UninhibitRedraw()
+		
+		// If we processed motion and there's STILL motion pending
+		// (because more motion events came in during this redraw),
+		// schedule another redraw to process it
+		if processedMotion && p.motionPending && p.widget != nil {
+			p.widget.ScheduleRedraw()
+		}
+	}
 }
 
 
@@ -516,10 +577,31 @@ func (p *Program) Motion(widget *window.Widget, input *window.Input, time uint32
 	cellWidth := p.renderer.CellWidth()
 	cellHeight := p.renderer.CellHeight()
 
-	mouseMsg := MapMouseMotion(x, y, cellWidth, cellHeight)
-	if mouseMsg != nil {
-		Debug("Mouse motion: (%.1f, %.1f)", x, y)
-		p.Send(*mouseMsg)
+	// Calculate cell position
+	cellX := int(x / float32(cellWidth))
+	cellY := int(y / float32(cellHeight))
+
+	// Only mark motion as pending if the cell position has changed
+	if !p.cellPosValid || cellX != p.lastCellX || cellY != p.lastCellY {
+		p.mu.Lock()
+		wasAlreadyPending := p.motionPending
+		p.lastCellX = cellX
+		p.lastCellY = cellY
+		p.cellPosValid = true
+		p.motionPending = true
+		p.pendingMotionX = cellX
+		p.pendingMotionY = cellY
+		p.mu.Unlock()
+		
+		Debug("Mouse motion: cell (%d, %d), already pending: %v", cellX, cellY, wasAlreadyPending)
+		
+		// Only schedule a redraw if motion wasn't already pending
+		// This prevents spamming ScheduleRedraw calls
+		if !wasAlreadyPending && p.window != nil {
+			Debug("Scheduling redraw for motion")
+			p.window.UninhibitRedraw()
+			widget.ScheduleRedraw()
+		}
 	}
 
 	return window.CursorLeft
@@ -543,6 +625,12 @@ func (p *Program) Button(
 	mouseMsg := MapMouseButton(p.pointerX, p.pointerY, button, state, cellWidth, cellHeight)
 	if mouseMsg != nil {
 		p.Send(*mouseMsg)
+		// Schedule a redraw to process the message
+		if !p.redrawScheduled && p.window != nil {
+			p.redrawScheduled = true
+			p.window.UninhibitRedraw()
+			p.widget.ScheduleRedraw()
+		}
 	}
 }
 
@@ -555,6 +643,12 @@ func (p *Program) Axis(widget *window.Widget, input *window.Input, time uint32, 
 	mouseMsg := MapMouseScroll(p.pointerX, p.pointerY, axis, value, cellWidth, cellHeight)
 	if mouseMsg != nil {
 		p.Send(*mouseMsg)
+		// Schedule a redraw to process the message
+		if !p.redrawScheduled && p.window != nil {
+			p.redrawScheduled = true
+			p.window.UninhibitRedraw()
+			p.widget.ScheduleRedraw()
+		}
 	}
 }
 
