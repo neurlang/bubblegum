@@ -101,3 +101,11 @@ type WindowSizeMsg struct {
 func (w WindowSizeMsg) String() string {
 	return fmt.Sprintf("WindowSizeMsg{Width: %d, Height: %d}", w.Width, w.Height)
 }
+
+// QuitMsg represents a termination signal for the application.
+type QuitMsg struct{}
+
+// String returns a string representation of the quit message for debugging.
+func (q QuitMsg) String() string {
+	return "QuitMsg{}"
+}
