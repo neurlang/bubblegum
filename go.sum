@@ -1,8 +1,8 @@
 github.com/BurntSushi/xgb v0.0.0-20160522181843-27f122750802/go.mod h1:IVnqGOEym/WlBOVXweHU+Q+/VP0lqqI8lqeDx9IjBqo=
 github.com/ebitengine/purego v0.7.1 h1:6/55d26lG3o9VCZX8lping+bZcmShseiqlh2bnUDiPA=
 github.com/ebitengine/purego v0.7.1/go.mod h1:ah1In8AOtksoNK6yk5z1HTJeUkC1Ez4Wk2idgGslMwQ=
-github.com/neurlang/wayland v0.3.0 h1:kf3sg5IXB7fj8cs9Mlw9eG5eEh49zJDjRMC+f0bzcoo=
-github.com/neurlang/wayland v0.3.0/go.mod h1:YKS+7tdgk07sNzFBF1Xd50Fwf+7ecrFBYaW+6+l5O08=
+github.com/neurlang/wayland v0.3.1-0.20251125071322-10c6f0e1c8d5 h1:idWS/CbDAyNmBXfFu/vG2v7g9FXj2+424h5UlaOTj7M=
+github.com/neurlang/wayland v0.3.1-0.20251125071322-10c6f0e1c8d5/go.mod h1:YKS+7tdgk07sNzFBF1Xd50Fwf+7ecrFBYaW+6+l5O08=
 github.com/neurlang/winc v0.1.1 h1:0Nu1f6mlJ7F0KselI1xrbvFvqOgPz0PzeTEd4iqessM=
 github.com/neurlang/winc v0.1.1/go.mod h1:M3RhPpObvIhmGBJtjVAlCUke88Bf4qAhu9kHqpCkqNA=
 github.com/spaolacci/murmur3 v1.1.0 h1:7c1g84S4BPRrfL5Xrdp6fOJ206sU9y293DDHaoy0bLI=

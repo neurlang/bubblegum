@@ -2,7 +2,7 @@ module github.com/neurlang/bubblegum
 
 go 1.21
 
-require github.com/neurlang/wayland v0.3.0
+require github.com/neurlang/wayland v0.3.1-0.20251125071322-10c6f0e1c8d5
 
 require (
 	github.com/ebitengine/purego v0.7.1 // indirect
