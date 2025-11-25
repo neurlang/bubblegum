@@ -1,5 +1,7 @@
 # BubbleGum
 
+![Screenshot of Bubblegum Movement App Demo](movement.gif?raw=true "Screenshot of Bubblegum Movement App Demo")
+
 BubbleGum is a port of the [Bubble Tea](https://github.com/charmbracelet/bubbletea) terminal UI framework that renders user interfaces using native windowing. It enables terminal UI applications built with Bubble Tea to be compiled into full GUI applications with minimal code changes, providing a portable way to create both terminal and graphical user interfaces from the same codebase.
 
 ## Features
