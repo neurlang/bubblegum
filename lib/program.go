@@ -40,7 +40,7 @@ type Program struct {
 	lastCellX         int
 	lastCellY         int
 	cellPosValid      bool
-	redrawScheduled   bool
+	needsRedraw       bool
 	motionPending     bool
 	pendingMotionX    int
 	pendingMotionY    int
@@ -227,6 +227,11 @@ func (p *Program) Run() (Model, error) {
 		p.cmdExec.Execute(initialCmd)
 	}
 
+	// Schedule initial redraw
+	p.mu.Lock()
+	p.scheduleRedraw()
+	p.mu.Unlock()
+
 	Info("Starting event loop")
 	// Run the display event loop (blocks until quit)
 	window.DisplayRun(display)
@@ -258,34 +263,12 @@ func (p *Program) validateOptions() error {
 	return nil
 }
 
-// handleMessage processes a single message by calling Update and rendering.
-func (p *Program) handleMessage(msg Msg) {
-	Debug("handleMessage received: %T", msg)
-	
-	// Check if this is a quit message
-	if _, isQuit := msg.(quitMsg); isQuit {
-		Info("Quit message received, exiting")
-		p.quit()
-		return
-	}
-
-	// Call Update
-	p.mu.Lock()
-	var cmd Cmd
-	p.model, cmd = p.model.Update(msg)
-	p.mu.Unlock()
-
-	Debug("Update completed, returned command: %v", cmd != nil)
-
-	// Execute the returned command
-	if cmd != nil {
-		p.cmdExec.Execute(cmd)
-	}
-
-	// Trigger a redraw
-	if p.window != nil {
+// scheduleRedraw marks that a redraw is needed and schedules it.
+func (p *Program) scheduleRedraw() {
+	if !p.needsRedraw && p.window != nil && p.widget != nil {
+		p.needsRedraw = true
 		p.window.UninhibitRedraw()
-		p.window.ScheduleRedraw()
+		p.widget.ScheduleRedraw()
 	}
 }
 
@@ -345,6 +328,9 @@ func (p *Program) Resize(widget *window.Widget, width int32, height int32, pwidt
 	default:
 		Warn("Message channel full, dropping WindowSizeMsg")
 	}
+	
+	// Schedule redraw on resize
+	p.scheduleRedraw()
 }
 
 // Redraw implements window.WidgetHandler interface.
@@ -353,8 +339,8 @@ func (p *Program) Redraw(widget *window.Widget) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	
-	// Clear the redraw scheduled flag
-	p.redrawScheduled = false
+	// Clear the needsRedraw flag
+	p.needsRedraw = false
 	
 	// Check for pending motion and create a message for it
 	// This avoids flooding the message channel with motion events
@@ -391,7 +377,7 @@ func (p *Program) Redraw(widget *window.Widget) {
 	hadMessages := false
 	var messagesToProcess []Msg
 	
-	// Collect all pending messages (no more motion coalescing needed)
+	// Collect all pending messages
 	for {
 		select {
 		case msg := <-p.msgChan:
@@ -434,18 +420,6 @@ done:
 		}()
 	}
 
-	// Check frame rate limiting
-	if p.options.FPS > 0 {
-		minFrameTime := time.Second / time.Duration(p.options.FPS)
-		elapsed := time.Since(p.lastRender)
-		if elapsed < minFrameTime {
-			// Skip this frame but schedule another redraw if we had messages
-			if hadMessages && p.window != nil {
-				p.window.UninhibitRedraw()
-			}
-			return
-		}
-	}
 
 	// Get the current view with panic recovery
 	var view string
@@ -464,7 +438,7 @@ done:
 	}()
 
 	// Skip rendering if view hasn't changed (unless we processed messages)
-	if view == p.lastView && p.lastView != "" && !hadMessages {
+	if view == p.lastView && p.lastView != "" && !hadMessages && !processedMotion {
 		return
 	}
 
@@ -503,8 +477,8 @@ done:
 		// If we processed motion and there's STILL motion pending
 		// (because more motion events came in during this redraw),
 		// schedule another redraw to process it
-		if processedMotion && p.motionPending && p.widget != nil {
-			p.widget.ScheduleRedraw()
+		if processedMotion && p.motionPending {
+			p.scheduleRedraw()
 		}
 	}
 }
@@ -542,9 +516,7 @@ func (p *Program) Key(
 		select {
 		case p.msgChan <- *keyMsg:
 			// Schedule a redraw to process the message
-			if p.widget != nil {
-				p.widget.ScheduleRedraw()
-			}
+			p.scheduleRedraw()
 		default:
 			Warn("Message channel full, dropping keyboard event")
 		}
@@ -597,10 +569,9 @@ func (p *Program) Motion(widget *window.Widget, input *window.Input, time uint32
 		
 		// Only schedule a redraw if motion wasn't already pending
 		// This prevents spamming ScheduleRedraw calls
-		if !wasAlreadyPending && p.window != nil {
+		if !wasAlreadyPending {
 			Debug("Scheduling redraw for motion")
-			p.window.UninhibitRedraw()
-			widget.ScheduleRedraw()
+			p.scheduleRedraw()
 		}
 	}
 
@@ -626,11 +597,7 @@ func (p *Program) Button(
 	if mouseMsg != nil {
 		p.Send(*mouseMsg)
 		// Schedule a redraw to process the message
-		if !p.redrawScheduled && p.window != nil {
-			p.redrawScheduled = true
-			p.window.UninhibitRedraw()
-			p.widget.ScheduleRedraw()
-		}
+		p.scheduleRedraw()
 	}
 }
 
@@ -644,11 +611,7 @@ func (p *Program) Axis(widget *window.Widget, input *window.Input, time uint32, 
 	if mouseMsg != nil {
 		p.Send(*mouseMsg)
 		// Schedule a redraw to process the message
-		if !p.redrawScheduled && p.window != nil {
-			p.redrawScheduled = true
-			p.window.UninhibitRedraw()
-			p.widget.ScheduleRedraw()
-		}
+		p.scheduleRedraw()
 	}
 }
 
