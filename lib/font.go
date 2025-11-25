@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-//go:embed fonts/*.png
+//go:embed fonts/*.png fonts/*.jpg
 var embedFonts embed.FS
 
 // Font represents a bitmap font loaded from PNG/JPEG files.
@@ -219,94 +219,208 @@ func NewFont() (*Font, error) {
 	return f, nil
 }
 
+func maxByte3(a, b [3]byte) [3]byte {
+	return [3]byte{maxByte(a[0], b[0]), maxByte(a[1], b[1]), maxByte(a[2], b[2])}
+}
+func maxByte(a, b byte) byte {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func Each(descriptor string, function func(string) error) error {
+	var buffer = strings.Split(strings.ReplaceAll(strings.ReplaceAll(descriptor, "\r\n", "\n"), "\t", "\n"), "\n")
+	for _, v := range buffer {
+		if len(v) == 0 {
+			continue
+		}
+		err := function(v)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *Font) Multiply(descriptor1, suffix, separator, descriptor2 string) error {
+	err := Each(descriptor1, func(v string) error {
+		err := f.Combine(suffix+v, descriptor2, v+separator)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	return err
+}
+
+func (f *Font) Combine(combiner, descriptor, textureName string) error {
+	if len(combiner) == 0 {
+		println("no combiner, would create same named textures")
+		return fmt.Errorf("no combiner")
+	}
+
+	var combinerTexture [][3]byte
+
+	if len(textureName) == 0 {
+		combinerTexture = f.GetRGBTexture(combiner)
+	} else {
+		combinerTexture = f.GetRGBTexture(textureName)
+	}
+	if len(combinerTexture) == 0 {
+		println("no combiner texture")
+		return fmt.Errorf("no combiner texture")
+	}
+
+	var buffer = strings.Split(strings.ReplaceAll(descriptor, "\r\n", "\n"), "\n")
+
+	for _, v := range buffer {
+		var buf = strings.Split(strings.Trim(v, "\t"), "\t")
+		for _, cell := range buf {
+			if len(cell) == 0 {
+				continue
+			}
+			if cell == combiner {
+				continue
+			}
+
+			var otherTexture = f.GetRGBTexture(cell)
+
+			if len(otherTexture) != len(combinerTexture) {
+				continue
+			}
+
+			var newTexture = make([][3]byte, len(otherTexture))
+			for i := range newTexture {
+				newTexture[i] = maxByte3(otherTexture[i], combinerTexture[i])
+			}
+
+			f.mapping[cell+combiner] = newTexture
+
+			//println(cell+combiner)
+		}
+	}
+	return nil
+}
+
+
+func (f *Font) Alias(alias, key string) error {
+	if f.mapping == nil {
+		println("no mapping")
+		return fmt.Errorf("no mapping")
+	}
+	if f.mapping[key] == nil {
+		println("key missing")
+		return fmt.Errorf("key missing")
+	}
+	f.mapping[alias] = f.mapping[key]
+	return nil
+}
+
 // LoadExtendedFonts loads additional Unicode font files.
 // This is optional and can be called after NewFont() to support more characters.
 // Note: Extended fonts must have the same cell dimensions as the base font.
 func (f *Font) LoadExtendedFonts() error {
-	// Try to load supplement (same cell size as ASCII)
-	if err := f.Load("supplement.png", supplementDescriptor, ""); err != nil {
-		// Extended fonts are optional, errors are not fatal
-		return fmt.Errorf("failed to load supplement.png: %w", err)
+	_ = f.Load("ascii.png", asciiDescriptor, "")
+	_ = f.Load("extendeda.png", extendedaDescriptor, "")
+	_ = f.Load("extendedb.png", extendedbDescriptor, "")
+	_ = f.Load("supplement.png", supplementDescriptor, "")
+	_ = f.Load("spacingmod.png", spacingmodDescriptor, "")
+	_ = f.Load("ipa.png", ipaDescriptor, "")
+	_ = f.Load("greek.png", greekDescriptor, "")
+	_ = f.Load("cyrillic.png", cyrillicDescriptor, "")
+	_ = f.Load("vietnamese.png", vietnameseDescriptor, "")
+	_ = f.Load("hangul0.png", hangul0Descriptor, "")
+	_ = f.Load("hangul1.png", hangul0Descriptor, "1")
+	_ = f.Load("hangul9.png", hangul9Descriptor, "")
+	_ = f.Multiply(hangul0Descriptor, "x", "1", hangul9Descriptor)
+	_ = Each(hangul0Descriptor, func(v string) error {
+		const buf = "	\u11a8\u11a9\u11aa\u11ab\u11ac\u11ad\u11ae\u11af\u11b0\u11b1\u11b2" +
+			"\u11b3\u11b4\u11b5\u11b6\u11b7\u11b8\u11b9\u11ba\u11bb\u11bc" +
+			"\u11bd\u11be\u11bf\u11c0\u11c1\u11c2"
+		for i := 1; i < 28; i++ {
+
+			var target = string([]rune(v)[0] + rune(i))
+			var bottom = string([]rune(buf)[i])
+
+			//println(v, "|",  bottom + "x" + v)
+			_ = f.Alias(target, bottom+"x"+v)
+		}
+
+		return nil
+	})
+	err := f.Load("combining.png", combiningDescriptor, "")
+	if err != nil {
+		println(err.Error())
 	}
-	
-	// Extended fonts have different cell sizes and can't be merged
-	// They would need to be loaded into a separate Font instance
-	
+	_ = f.Multiply(combiningDescriptor, "", "", cyrillicDescriptor)
+	_ = f.Load("armenian.png", armenianDescriptor, "")
+
+	_ = f.Load("chinese1.jpg", chinese1Descriptor, "")
+
+	_ = f.Load("devanagari1.png", devanagari1Descriptor, "")
+	_ = f.Load("devanagari2.png", devanagari2Descriptor, "")
+	_ = f.Load("devanagari3.png", devanagari3Descriptor, "")
+	_ = f.Combine("ः", devanagari1Descriptor, "")
+	_ = f.Combine("ं", devanagari1Descriptor, "")
+	_ = f.Combine("ा", devanagari1Descriptor, "")
+	_ = f.Combine("ऻ", devanagari1Descriptor, "")
+	_ = f.Combine("ि", devanagari1Descriptor, "")
+	_ = f.Combine("ी", devanagari1Descriptor, "")
+	_ = f.Combine("े", devanagari1Descriptor, "")
+	_ = f.Combine("ॅ", devanagari1Descriptor, "")
+	_ = f.Combine("ॆ", devanagari1Descriptor, "")
+	_ = f.Combine("ै", devanagari1Descriptor, "")
+	_ = f.Combine("ॉ", devanagari1Descriptor, "")
+	_ = f.Combine("ॊ", devanagari1Descriptor, "")
+	_ = f.Combine("ो", devanagari1Descriptor, "")
+	_ = f.Combine("ौ", devanagari1Descriptor, "")
+	_ = f.Combine("़", devanagari1Descriptor, "")
+	_ = f.Combine("ॎ", devanagari1Descriptor, "")
+	_ = f.Combine("ऀ", devanagari1Descriptor, "")
+	_ = f.Combine("ँ", devanagari1Descriptor, "")
+	_ = f.Combine("ऺ", devanagari1Descriptor, "")
+	_ = f.Combine("ु", devanagari1Descriptor, "")
+	_ = f.Combine("ू", devanagari1Descriptor, "")
+	_ = f.Combine("ृ", devanagari1Descriptor, "")
+	_ = f.Combine("ॄ", devanagari1Descriptor, "")
+	_ = f.Combine("ॏ", devanagari1Descriptor, "")
+	_ = f.Combine("ॕ", devanagari1Descriptor, "")
+	_ = f.Combine("ॖ", devanagari1Descriptor, "")
+	_ = f.Combine("ॗ", devanagari1Descriptor, "")
+	_ = f.Combine("ॢ", devanagari1Descriptor, "")
+	_ = f.Combine("ॣ", devanagari1Descriptor, "")
+
+	_ = f.Combine("ों", devanagari1Descriptor, "")
+	_ = f.Combine("ें", devanagari1Descriptor, "")
+	_ = f.Combine("़ा", devanagari1Descriptor, "")
+	_ = f.Combine("ो़", devanagari1Descriptor, "")
+	_ = f.Combine("़ि", devanagari1Descriptor, "")
+	_ = f.Combine("ूँ", devanagari1Descriptor, "")
+	_ = f.Combine("़ो", devanagari1Descriptor, "")
+
+	_ = f.Combine("ꣿ", "ए", "")
+	_ = f.Alias("ꣾ", "एꣿ")
+	_ = f.Alias("क़्", "क़्")
+	_ = f.Alias("ख़्", "ख़्")
+	_ = f.Alias("ग़्", "ग़्")
+	_ = f.Alias("ज़्", "ज़्")
+	_ = f.Alias("ड़्", "ड़्")
+	_ = f.Alias("ढ़्", "ढ़्")
+	_ = f.Alias("फ़्", "फ़्")
+	_ = f.Alias("य़्", "य़्")
+	_ = f.Alias("ड़", "ड़")
+	_ = f.Alias("ढ़", "ढ़")
+	_ = f.Alias("ॴ", "आऺ")
+	_ = f.Alias("ॶ", "अॖ")
+	_ = f.Alias("ॷ", "अॗ")
+	_ = f.Alias("ॵ", "अॏ")
+	_ = f.Alias("ॲ", "अॅ")
+	_ = f.Alias("ꣲ", "ँ")
+	_ = f.Alias("॰", "°")
+
+	_ = f.Alias("\t", " ")
+	_ = f.Alias("", " ")
 	return nil
 }
 
-// asciiDescriptor defines the layout of the ASCII font image
-var asciiDescriptor = "" +
-	` 	0	@	P	` + "`" + `	p
-	!	1	A	Q	a	q
-	"	2	B	R	b	r
-	#	3	C	S	c	s
-	$	4	D	T	d	t
-	%	5	E	U	e	u
-	&	6	F	V	f	v
-	'	7	G	W	g	w
-	(	8	H	X	h	x
-	)	9	I	Y	i	y
-	*	:	J	Z	j	z
-	+	;	K	[	k	{
-	,	<	L	\	l	|
-	-	=	M	]	m	}
-	.	>	N	^	n	~
-	/	?	O	_	o	DEL`
-
-// extendedaDescriptor defines extended Latin characters
-var extendedaDescriptor = "" +
-	`Ā	Ġ	Ŀ	ş	ā	ġ	ŀ	Š
-	Ă	Ģ	Ł	š	ă	ģ	ł	Ţ
-	Ą	Ĥ	Ń	ţ	ą	ĥ	ń	Ť
-	Ć	Ħ	Ņ	ť	ć	ħ	ņ	Ŧ
-	Ĉ	Ĩ	Ň	ŧ	ĉ	ĩ	ň	Ũ
-	Ċ	Ī	ŉ	ũ	ċ	ī	Ŋ	Ū
-	Č	Ĭ	ŋ	ū	č	ĭ	Ō	Ŭ
-	Ď	Į	ō	ŭ	ď	į	Ŏ	Ů
-	Đ	İ	ŏ	ů	đ	ı	Ő	Ű
-	Ē	Ĳ	ő	ű	ē	ĳ	Œ	Ų
-	Ĕ	Ĵ	œ	ų	ĕ	ĵ	Ŕ	Ŵ
-	Ė	Ķ	ŕ	ŵ	ė	ķ	Ŗ	Ŷ
-	Ę	ſ	ŗ	ŷ	ę	ĸ	Ř	Ÿ
-	Ě	Ĺ	ř	Ź	ě	ĺ	Ś	ź
-	Ĝ	Ļ	ś	Ż	ĝ	ļ	Ŝ	ż
-	Ğ	Ľ	ŝ	Ž	ğ	ľ	Ş	ž`
-
-// supplementDescriptor defines supplemental Latin characters
-var supplementDescriptor = "" +
-	`¡	±	À	Ï	à	ï
-	¢	²	Á	Ñ	á	ñ
-	£	³	Â	Ò	â	ò
-	¤	´	Ã	Ó	ã	ó
-	¥	µ	Ä	Ô	ä	ô
-	¦	¶	Å	Õ	å	õ
-	§	·	Æ	Ö	æ	ö
-	¨	¸	Ç	Ø	ç	ø
-	©	¹	Ð	Ù	ð	ù
-	ª	º	È	Ú	è	ú
-	«	»	É	Û	é	û
-	¬	¼	Ê	Ü	ê	ü
-	½	¾	Ë	Ý	ë	ý
-	­®	¿	Ì	Ÿ	ì	ÿ
-	¯	÷	Í	Þ	í	þ
-	°	×	Î	ẞ	î	ß`
-
-// extendedbDescriptor defines more extended Latin characters
-const extendedbDescriptor = "" +
-	`ǎ	Ǎ	ǳ	ǲ	ȟ	Ȟ	ǒ	Ǒ	ȑ	Ȑ	ȳ	Ȳ
-	ǻ	Ǻ	Ǳ	ǆ	ƕ	Ƕ	ȫ	Ȫ	ȓ	Ȓ	ɏ	Ɏ
-	ǟ	Ǟ	ǅ	Ǆ	ǐ	Ǐ	ȭ	Ȭ	ɍ	Ɍ	ƴ	Ƴ
-	ȧ	Ȧ	Ɖ	Ɗ	ȉ	Ȉ	ȯ	Ȯ	ș	Ș	ȝ	Ȝ
-	ǡ	Ǡ	ȩ	Ȩ	ȋ	Ȋ	ȱ	Ȱ	Ʀ	ȿ	ƶ	Ƶ
-	ȁ	Ȁ	ȅ	Ȅ	Ɨ	Ɩ	ǿ	Ǿ	ț	Ț	ȥ	Ȥ
-	ȃ	Ȃ	ȇ	Ȇ	ǰ	ȷ	ǫ	Ǫ	ƾ	Ⱦ	ǯ	Ǯ
-	ǽ	Ǽ	ɇ	Ɇ	ɉ	Ɉ	ǭ	Ǭ	Ƭ	Ʈ	ƹ	Ƹ
-	ǣ	Ǣ	ǝ	Ǝ	ǩ	Ǩ	ȍ	Ȍ	ǔ	Ǔ	ƿ	Ƿ
-	Ⱥ	ƀ	Ə	Ɛ	ƙ	Ƙ	ȏ	Ȏ	ǘ	Ǘ	ǜ	Ǜ
-	Ƀ	Ɓ	ƒ	Ƒ	ǉ	ǈ	Ɲ	ȵ	ǚ	Ǚ	ƽ	Ƽ
-	ƃ	Ƃ	ǵ	Ǵ	ƚ	Ƚ	Ǉ	Ɔ	ǖ	Ǖ	ƅ	Ƅ
-	ȼ	Ȼ	ǧ	Ǧ	ȴ	ƛ	ơ	Ơ	ȕ	Ȕ	ƨ	Ƨ
-	ƈ	Ƈ	ǥ	Ǥ	ǹ	Ǹ	ȣ	Ȣ	ȗ	Ȗ	ȡ	ƫ
-	ȸ	ȹ	Ɠ	Ɣ	ǌ	ǋ	ƥ	Ƥ	ɋ	Ɋ	ư	Ư
-	ƌ	Ƌ	ƣ	Ƣ	ƞ	Ƞ	Ǌ	Ɵ	Ʃ	ƪ	ƭ	ȶ`
