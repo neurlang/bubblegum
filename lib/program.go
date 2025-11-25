@@ -575,7 +575,7 @@ func (p *Program) Motion(widget *window.Widget, input *window.Input, time uint32
 		}
 	}
 
-	return window.CursorLeft
+	return window.CursorLeftPtr
 }
 
 // Button implements window.WidgetHandler interface for pointer button events.
